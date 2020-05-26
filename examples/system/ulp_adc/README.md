@@ -1,3 +1,6 @@
+| Supported Targets | ESP32 |
+| ----------------- | ----- |
+
 # ULP ADC Example
 
 This example demonstrates how to use the ULP coprocessor to poll ADC in deep sleep.
@@ -6,11 +9,21 @@ ULP program periodically measures the input voltage on GPIO34. The voltage is co
 
 By default, thresholds are set to 1.35V and 1.75V, approximately.
 
-Average current drawn by the ESP32 in this example with the default configuration (10Hz measurement period, 4x averaging) is 80 uA.
+GPIO15 is connected to ground to supress output from ROM bootloader.
+
+Average current drawn by the ESP32 in this example (with the default 4x averaging) depending on the measurement frequency is as follows:
+
+Measurement frequency, Hz | Average current, uA
+--------------------------|---------------------
+  10                      | 8.5
+  50                      | 20
+ 100                      | 37
+
+In this example, the `CONFIG_BOOTLOADER_SKIP_VALIDATE_IN_DEEP_SLEEP` Kconfig option is used, which allows you to reduce the boot time of the bootloader during waking up from deep sleep. The bootloader stores in rtc memory the address of a running partition and uses it when it wakes up. This example allows you to skip all image checks and speed up the boot.
 
 ## Example output
 
-Below is the output from this example. GPIO15 is pulled down to ground to supress output from ROM bootloader.
+Below is the output from this example.
 
 ```
 Not ULP wakeup

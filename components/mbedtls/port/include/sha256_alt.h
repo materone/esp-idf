@@ -29,6 +29,33 @@ extern "C" {
 
 #if defined(MBEDTLS_SHA256_ALT)
 
+
+#if CONFIG_IDF_TARGET_ESP32S2
+
+#include "esp32s2/sha.h"
+
+typedef enum {
+    ESP_SHA256_STATE_INIT,
+    ESP_SHA256_STATE_IN_PROCESS
+} esp_sha256_state;
+
+/**
+ * \brief          SHA-256 context structure
+ */
+typedef struct {
+    uint32_t total[2];          /*!< number of bytes processed  */
+    uint32_t state[8];          /*!< intermediate digest state  */
+    unsigned char buffer[64];   /*!< data block being processed */
+    int first_block;           /*!< if first then true, else false */
+    esp_sha_type mode;
+    esp_sha256_state sha_state;
+}
+mbedtls_sha256_context;
+
+#endif //CONFIG_IDF_TARGET_ESP32S2
+
+#if CONFIG_IDF_TARGET_ESP32
+
 typedef enum {
     ESP_MBEDTLS_SHA256_UNUSED, /* first block hasn't been processed yet */
     ESP_MBEDTLS_SHA256_HARDWARE, /* using hardware SHA engine */
@@ -38,8 +65,7 @@ typedef enum {
 /**
  * \brief          SHA-256 context structure
  */
-typedef struct
-{
+typedef struct {
     uint32_t total[2];          /*!< number of bytes processed  */
     uint32_t state[8];          /*!< intermediate digest state  */
     unsigned char buffer[64];   /*!< data block being processed */
@@ -48,57 +74,7 @@ typedef struct
 }
 mbedtls_sha256_context;
 
-/**
- * \brief          Initialize SHA-256 context
- *
- * \param ctx      SHA-256 context to be initialized
- */
-void mbedtls_sha256_init( mbedtls_sha256_context *ctx );
-
-/**
- * \brief          Clear SHA-256 context
- *
- * \param ctx      SHA-256 context to be cleared
- */
-void mbedtls_sha256_free( mbedtls_sha256_context *ctx );
-
-/**
- * \brief          Clone (the state of) a SHA-256 context
- *
- * \param dst      The destination context
- * \param src      The context to be cloned
- */
-void mbedtls_sha256_clone( mbedtls_sha256_context *dst,
-                           const mbedtls_sha256_context *src );
-
-/**
- * \brief          SHA-256 context setup
- *
- * \param ctx      context to be initialized
- * \param is224    0 = use SHA256, 1 = use SHA224
- */
-void mbedtls_sha256_starts( mbedtls_sha256_context *ctx, int is224 );
-
-/**
- * \brief          SHA-256 process buffer
- *
- * \param ctx      SHA-256 context
- * \param input    buffer holding the  data
- * \param ilen     length of the input data
- */
-void mbedtls_sha256_update( mbedtls_sha256_context *ctx, const unsigned char *input,
-                    size_t ilen );
-
-/**
- * \brief          SHA-256 final digest
- *
- * \param ctx      SHA-256 context
- * \param output   SHA-224/256 checksum result
- */
-void mbedtls_sha256_finish( mbedtls_sha256_context *ctx, unsigned char output[32] );
-
-/* Internal use */
-void mbedtls_sha256_process( mbedtls_sha256_context *ctx, const unsigned char data[64] );
+#endif //CONFIG_IDF_TARGET_ESP32
 
 #endif
 

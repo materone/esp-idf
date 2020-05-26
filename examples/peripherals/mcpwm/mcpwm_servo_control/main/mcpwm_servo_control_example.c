@@ -13,15 +13,14 @@
 #include "esp_attr.h"
 
 #include "driver/mcpwm.h"
-#include "soc/mcpwm_reg.h"
-#include "soc/mcpwm_struct.h"
+#include "soc/mcpwm_periph.h"
 
 //You can get these value from the datasheet of servo you use, in general pulse width varies between 1000 to 2000 mocrosecond
 #define SERVO_MIN_PULSEWIDTH 1000 //Minimum pulse width in microsecond
 #define SERVO_MAX_PULSEWIDTH 2000 //Maximum pulse width in microsecond
 #define SERVO_MAX_DEGREE 90 //Maximum angle in degree upto which servo can rotate
 
-static void mcpwm_example_gpio_initialize()
+static void mcpwm_example_gpio_initialize(void)
 {
     printf("initializing mcpwm servo control gpio......\n");
     mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0A, 18);    //Set GPIO 18 as PWM0A, to which servo is connected
@@ -40,16 +39,6 @@ static uint32_t servo_per_degree_init(uint32_t degree_of_rotation)
     uint32_t cal_pulsewidth = 0;
     cal_pulsewidth = (SERVO_MIN_PULSEWIDTH + (((SERVO_MAX_PULSEWIDTH - SERVO_MIN_PULSEWIDTH) * (degree_of_rotation)) / (SERVO_MAX_DEGREE)));
     return cal_pulsewidth;
-}
-
-/**
- * @brief directly set servo motor to a particular angle
- */
-static void servo_set_angle(uint32_t angle_of_rotation)
-{
-    uint32_t angle_t;
-    angle_t = servo_per_degree_init(angle_of_rotation);
-    mcpwm_set_duty_in_us(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A, angle_t);
 }
 
 /**
@@ -81,7 +70,7 @@ void mcpwm_example_servo_control(void *arg)
     }
 }
 
-void app_main()
+void app_main(void)
 {
     printf("Testing servo motor.......\n");
     xTaskCreate(mcpwm_example_servo_control, "mcpwm_example_servo_control", 4096, NULL, 5, NULL);

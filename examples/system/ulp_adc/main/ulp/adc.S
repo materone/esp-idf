@@ -72,7 +72,7 @@ entry:
 	stage_rst
 measure:
 	/* measure and add value to accumulator */
-	adc r1, 0, adc_channel + 1, 0
+	adc r1, 0, adc_channel + 1
 	add r0, r0, r1
 	/* increment loop counter and check exit condition */
 	stage_inc 1
@@ -105,7 +105,7 @@ exit:
 	.global wake_up
 wake_up:
 	/* Check if the system can be woken up */
-	READ_RTC_REG(RTC_CNTL_DIAG0_REG, 19, 1)
+	READ_RTC_FIELD(RTC_CNTL_LOW_POWER_ST_REG, RTC_CNTL_RDY_FOR_WAKEUP)
 	and r0, r0, 1
 	jump exit, eq
 

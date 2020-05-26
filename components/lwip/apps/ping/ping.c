@@ -5,7 +5,7 @@
  */
 
 /*
- * Redistribution and use in source and binary forms, with or without modification, 
+ * Redistribution and use in source and binary forms, with or without modification,
  * are permitted provided that the following conditions are met:
  *
  * 1. Redistributions of source code must retain the above copyright notice,
@@ -14,24 +14,24 @@
  *    this list of conditions and the following disclaimer in the documentation
  *    and/or other materials provided with the distribution.
  * 3. The name of the author may not be used to endorse or promote products
- *    derived from this software without specific prior written permission. 
+ *    derived from this software without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED 
- * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF 
- * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT 
- * SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, 
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT 
- * OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS 
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN 
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING 
- * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY 
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
+ * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
+ * SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT
+ * OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
+ * IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
  * OF SUCH DAMAGE.
  *
  * This file is part of the lwIP TCP/IP stack.
- * 
+ *
  */
 
-/** 
+/**
  * This is an example of a "ping" sender (with raw API and socket API).
  * It can be used as a start point to maintain opened a network connection, or
  * like a network "watchdog" for your device.
@@ -42,22 +42,23 @@
 
 #if LWIP_IPV4 && LWIP_RAW /* don't build if not configured for use in lwipopts.h */
 
-#include "ping.h"
+#include "ping/ping.h"
 
 #include "lwip/mem.h"
 #include "lwip/raw.h"
 #include "lwip/icmp.h"
 #include "lwip/netif.h"
 #include "lwip/sys.h"
-#include "lwip/timers.h"
+#include "lwip/timeouts.h"
 #include "lwip/inet_chksum.h"
 
 #if PING_USE_SOCKETS
 #include "lwip/sockets.h"
 #include "lwip/inet.h"
+#include "ping/ping_sock.h"
 #endif /* PING_USE_SOCKETS */
 
-#ifdef ESP_LWIP
+#ifdef ESP_PING
 #include "esp_ping.h"
 #include "lwip/ip_addr.h"
 #endif
@@ -65,7 +66,7 @@
  * PING_DEBUG: Enable debugging for PING.
  */
 #ifndef PING_DEBUG
-#define PING_DEBUG     LWIP_DBG_ON
+#define PING_DEBUG     LWIP_DBG_OFF
 #endif
 
 /** ping target - should be an "ip4_addr_t" */
@@ -98,12 +99,16 @@
 #define PING_RESULT(ping_ok)
 #endif
 
-/* ping variables */
-static u16_t ping_seq_num;
-static u32_t ping_time;
-#if !PING_USE_SOCKETS
+#define PING_TIME_DIFF_MS(_end, _start)  ((uint32_t)(((_end).tv_sec - (_start).tv_sec) * 1000 + (_end.tv_usec - _start.tv_usec)/1000))
+#define PING_TIME_DIFF_SEC(_end, _start) ((uint32_t)((_end).tv_sec - (_start).tv_sec))
+
+#if PING_USE_SOCKETS
+/* ping handle */
+static esp_ping_handle_t ping = NULL;
+#else
 static struct raw_pcb *ping_pcb;
-#endif /* PING_USE_SOCKETS */
+static u16_t ping_seq_num;
+static struct timeval ping_time;
 
 /** Prepare a echo ICMP request */
 static void
@@ -116,7 +121,7 @@ ping_prepare_echo( struct icmp_echo_hdr *iecho, u16_t len)
   ICMPH_CODE_SET(iecho, 0);
   iecho->chksum = 0;
   iecho->id     = PING_ID;
-  iecho->seqno  = lwip_htons(++ping_seq_num);
+  iecho->seqno  = htons(++ping_seq_num);
 
   /* fill the additional data buffer with some data */
   for(i = 0; i < data_len; i++) {
@@ -126,144 +131,13 @@ ping_prepare_echo( struct icmp_echo_hdr *iecho, u16_t len)
   iecho->chksum = inet_chksum(iecho, len);
 }
 
-#if PING_USE_SOCKETS
-
-/* Ping using the socket ip */
-static err_t
-ping_send(int s, ip_addr_t *addr)
-{
-  int err;
-  struct icmp_echo_hdr *iecho;
-  struct sockaddr_in to;
-  size_t ping_size = sizeof(struct icmp_echo_hdr) + PING_DATA_SIZE;
-  LWIP_ASSERT("ping_size is too big", ping_size <= 0xffff);
-  LWIP_ASSERT("ping: expect IPv4 address", !IP_IS_V6(addr));
-
-  iecho = (struct icmp_echo_hdr *)mem_malloc((mem_size_t)ping_size);
-  if (!iecho) {
-    return ERR_MEM;
-  }
-
-  ping_prepare_echo(iecho, (u16_t)ping_size);
-
-  to.sin_len = sizeof(to);
-  to.sin_family = AF_INET;
-  inet_addr_from_ipaddr(&to.sin_addr, ip_2_ip4(addr));
-
-  err = lwip_sendto(s, iecho, ping_size, 0, (struct sockaddr*)&to, sizeof(to));
-
-  mem_free(iecho);
-
-  return (err ? ERR_OK : ERR_VAL);
-}
-
-static void
-ping_recv(int s)
-{
-  char buf[64];
-  int len;
-  struct sockaddr_in from;
-  struct ip_hdr *iphdr;
-  struct icmp_echo_hdr *iecho;
-  int fromlen = sizeof(from);
-
-  while((len = lwip_recvfrom(s, buf, sizeof(buf), 0, (struct sockaddr*)&from, (socklen_t*)&fromlen)) > 0) {
-    if (len >= (int)(sizeof(struct ip_hdr)+sizeof(struct icmp_echo_hdr))) {
-      if (from.sin_family != AF_INET) {
-        /* Ping is not IPv4 */ 
-        LWIP_DEBUGF( PING_DEBUG, ("ping: invalid sin_family\n"));
-      } else {
-        ip4_addr_t fromaddr;
-        inet_addr_to_ipaddr(&fromaddr, &from.sin_addr);
-        LWIP_DEBUGF( PING_DEBUG, ("ping: recv "));
-        ip4_addr_debug_print(PING_DEBUG, &fromaddr);
-        LWIP_DEBUGF( PING_DEBUG, (" %"U32_F" ms\n", (sys_now() - ping_time)));
-
-        iphdr = (struct ip_hdr *)buf;
-        iecho = (struct icmp_echo_hdr *)(buf + (IPH_HL(iphdr) * 4));
-        if ((iecho->id == PING_ID) && (iecho->seqno == lwip_htons(ping_seq_num))) {
-          /* do some ping result processing */
-#ifdef ESP_LWIP
-          esp_ping_result((ICMPH_TYPE(iecho) == ICMP_ER), len, (sys_now() - ping_time));
-#else
-          PING_RESULT((ICMPH_TYPE(iecho) == ICMP_ER));
-#endif
-          return;
-        } else {
-          LWIP_DEBUGF( PING_DEBUG, ("ping: drop\n"));
-        }
-      }
-    }
-    fromlen = sizeof(from);
-  }
-
-  if (len == 0) {
-    LWIP_DEBUGF( PING_DEBUG, ("ping: recv - %"U32_F" ms - timeout\n", (sys_now()-ping_time)));
-  }
-
-  /* do some ping result processing */
-#ifdef ESP_LWIP
-  esp_ping_result(0, len, (sys_now()-ping_time));
-#else
-  PING_RESULT(0);
-#endif
-}
-
-static void
-ping_thread(void *arg)
-{
-  int s;
-  int ret;
-  ip_addr_t ping_target;
-#if LWIP_SO_SNDRCVTIMEO_NONSTANDARD
-  int timeout = PING_RCV_TIMEO;
-#else
-  struct timeval timeout;
-  timeout.tv_sec = PING_RCV_TIMEO/1000;
-  timeout.tv_usec = (PING_RCV_TIMEO%1000)*1000;
-#endif
-  LWIP_UNUSED_ARG(arg);
-
-  if ((s = lwip_socket(AF_INET, SOCK_RAW, IP_PROTO_ICMP)) < 0) {
-    return;
-  }
-
-  ret = lwip_setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-  LWIP_ASSERT("setting receive timeout failed", ret == 0);
-  LWIP_UNUSED_ARG(ret);
-
-  while (1) {
-#ifdef ESP_LWIP
-    ip4_addr_t ipaddr;
-    esp_ping_get_target(PING_TARGET_IP_ADDRESS, &ipaddr.addr, sizeof(uint32_t));
-    ip_addr_copy_from_ip4(ping_target, ipaddr);
-#else
-    ip_addr_copy_from_ip4(ping_target, PING_TARGET);
-#endif
-
-    if (ping_send(s, &ping_target) == ERR_OK) {
-      LWIP_DEBUGF( PING_DEBUG, ("ping: send "));
-      ip_addr_debug_print(PING_DEBUG, &ping_target);
-      LWIP_DEBUGF( PING_DEBUG, ("\n"));
-
-      ping_time = sys_now();
-      ping_recv(s);
-    } else {
-      LWIP_DEBUGF( PING_DEBUG, ("ping: send "));
-      ip_addr_debug_print(PING_DEBUG, &ping_target);
-      LWIP_DEBUGF( PING_DEBUG, (" - error\n"));
-    }
-    sys_msleep(PING_DELAY);
-  }
-}
-
-#else /* PING_USE_SOCKETS */
-
 /* Ping using the raw ip */
 static u8_t
 ping_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_addr_t *addr)
 {
   struct icmp_echo_hdr *iecho;
+  struct timeval now;
+
   LWIP_UNUSED_ARG(arg);
   LWIP_UNUSED_ARG(pcb);
   LWIP_UNUSED_ARG(addr);
@@ -273,10 +147,11 @@ ping_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_addr_t *addr)
       pbuf_header(p, -PBUF_IP_HLEN) == 0) {
     iecho = (struct icmp_echo_hdr *)p->payload;
 
-    if ((iecho->id == PING_ID) && (iecho->seqno == lwip_htons(ping_seq_num))) {
+    if ((iecho->id == PING_ID) && (iecho->seqno == htons(ping_seq_num))) {
       LWIP_DEBUGF( PING_DEBUG, ("ping: recv "));
       ip_addr_debug_print(PING_DEBUG, addr);
-      LWIP_DEBUGF( PING_DEBUG, (" %"U32_F" ms\n", (sys_now()-ping_time)));
+      gettimeofday(&now, NULL);
+      LWIP_DEBUGF( PING_DEBUG, (" %"U32_F" ms\n", PING_TIME_DIFF_MS(now, ping_time)));
 
       /* do some ping result processing */
       PING_RESULT(1);
@@ -312,7 +187,7 @@ ping_send(struct raw_pcb *raw, ip_addr_t *addr)
     ping_prepare_echo(iecho, (u16_t)ping_size);
 
     raw_sendto(raw, p, addr);
-    ping_time = sys_now();
+    ping_time = system_get_time();
   }
   pbuf_free(p);
 }
@@ -327,7 +202,6 @@ ping_timeout(void *arg)
 
   ip_addr_copy_from_ip4(ping_target, PING_TARGET);
   ping_send(pcb, &ping_target);
-
   sys_timeout(PING_DELAY, ping_timeout, pcb);
 }
 
@@ -353,14 +227,83 @@ ping_send_now(void)
 
 #endif /* PING_USE_SOCKETS */
 
-void
+/**
+ *
+ * Re-implement ping_init and ping_deinit with the APIs from ping_sock.h for back-ward compatibility sake.
+ * It's highly recommended that users should use the new APIs from ping_sock.h.
+ * ToDo: ping.h and esp_ping.h are deprecated now and should be removed in idf v5.x.
+ *
+ */
+
+static void
+on_ping_success(esp_ping_handle_t hdl, void *args)
+{
+  uint32_t elapsed_time, recv_len;
+  esp_ping_get_profile(hdl, ESP_PING_PROF_SIZE, &recv_len, sizeof(recv_len));
+  esp_ping_get_profile(hdl, ESP_PING_PROF_TIMEGAP, &elapsed_time, sizeof(elapsed_time));
+  esp_ping_result(PING_RES_OK, recv_len, elapsed_time);
+}
+
+static void
+on_ping_timeout(esp_ping_handle_t hdl, void *args)
+{
+  uint32_t elapsed_time, recv_len;
+  esp_ping_get_profile(hdl, ESP_PING_PROF_SIZE, &recv_len, sizeof(recv_len));
+  esp_ping_get_profile(hdl, ESP_PING_PROF_TIMEGAP, &elapsed_time, sizeof(elapsed_time));
+  esp_ping_result(PING_RES_TIMEOUT, recv_len, elapsed_time);
+}
+
+static void
+on_ping_end(esp_ping_handle_t hdl, void *args)
+{
+  esp_ping_result(PING_RES_FINISH, 0, 0);
+  esp_ping_delete_session(hdl);
+}
+
+int
 ping_init(void)
 {
 #if PING_USE_SOCKETS
-  sys_thread_new("ping_thread", ping_thread, NULL, DEFAULT_THREAD_STACKSIZE, DEFAULT_THREAD_PRIO);
+  uint32_t tos = 0;
+  uint32_t ping_timeout = PING_RCV_TIMEO;
+  uint32_t ping_delay = PING_DELAY;
+  uint32_t ping_count_max = 3;
+  ip_addr_t ping_target;
+  ip4_addr_t ipaddr;
+
+  esp_ping_get_target(PING_TARGET_IP_ADDRESS_COUNT, &ping_count_max, sizeof(ping_count_max));
+  esp_ping_get_target(PING_TARGET_RCV_TIMEO, &ping_timeout, sizeof(ping_timeout));
+  esp_ping_get_target(PING_TARGET_DELAY_TIME, &ping_delay, sizeof(ping_delay));
+  esp_ping_get_target(PING_TARGET_IP_ADDRESS, &ipaddr.addr, sizeof(uint32_t));
+  esp_ping_get_target(PING_TARGET_IP_TOS, &tos, sizeof(tos));
+  ip_addr_copy_from_ip4(ping_target, ipaddr);
+
+  esp_ping_config_t config = ESP_PING_DEFAULT_CONFIG();
+  config.count = ping_count_max;
+  config.timeout_ms = ping_timeout;
+  config.interval_ms = ping_delay;
+  config.target_addr = ping_target;
+  config.tos = tos;
+
+  esp_ping_callbacks_t cbs = {
+    .on_ping_end = on_ping_end,
+    .on_ping_success = on_ping_success,
+    .on_ping_timeout = on_ping_timeout,
+  };
+
+  esp_ping_new_session(&config, &cbs, &ping);
+  esp_ping_start(ping);
 #else /* PING_USE_SOCKETS */
   ping_raw_init();
 #endif /* PING_USE_SOCKETS */
+  return ERR_OK;
+}
+
+void
+ping_deinit(void)
+{
+  esp_ping_stop(ping);
+  esp_ping_delete_session(ping);
 }
 
 #endif /* LWIP_IPV4 && LWIP_RAW */

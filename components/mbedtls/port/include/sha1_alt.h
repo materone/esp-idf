@@ -29,6 +29,30 @@ extern "C" {
 
 #if defined(MBEDTLS_SHA1_ALT)
 
+#if CONFIG_IDF_TARGET_ESP32S2
+
+#include "esp32s2/sha.h"
+typedef enum {
+    ESP_SHA1_STATE_INIT,
+    ESP_SHA1_STATE_IN_PROCESS
+} esp_sha1_state;
+
+/**
+ * \brief          SHA-1 context structure
+ */
+typedef struct {
+    uint32_t total[2];          /*!< number of bytes processed  */
+    uint32_t state[5];          /*!< intermediate digest state  */
+    unsigned char buffer[64];   /*!< data block being processed */
+    int first_block;            /*!< if first then true else false */
+    esp_sha_type mode;
+    esp_sha1_state sha_state;
+} mbedtls_sha1_context;
+
+#endif //CONFIG_IDF_TARGET_ESP32S2
+
+#if CONFIG_IDF_TARGET_ESP32
+
 typedef enum {
     ESP_MBEDTLS_SHA1_UNUSED, /* first block hasn't been processed yet */
     ESP_MBEDTLS_SHA1_HARDWARE, /* using hardware SHA engine */
@@ -38,8 +62,7 @@ typedef enum {
 /**
  * \brief          SHA-1 context structure
  */
-typedef struct
-{
+typedef struct {
     uint32_t total[2];          /*!< number of bytes processed  */
     uint32_t state[5];          /*!< intermediate digest state  */
     unsigned char buffer[64];   /*!< data block being processed */
@@ -47,55 +70,7 @@ typedef struct
 }
 mbedtls_sha1_context;
 
-/**
- * \brief          Initialize SHA-1 context
- *
- * \param ctx      SHA-1 context to be initialized
- */
-void mbedtls_sha1_init( mbedtls_sha1_context *ctx );
-
-/**
- * \brief          Clear SHA-1 context
- *
- * \param ctx      SHA-1 context to be cleared
- */
-void mbedtls_sha1_free( mbedtls_sha1_context *ctx );
-
-/**
- * \brief          Clone (the state of) a SHA-1 context
- *
- * \param dst      The destination context
- * \param src      The context to be cloned
- */
-void mbedtls_sha1_clone( mbedtls_sha1_context *dst,
-                         const mbedtls_sha1_context *src );
-
-/**
- * \brief          SHA-1 context setup
- *
- * \param ctx      context to be initialized
- */
-void mbedtls_sha1_starts( mbedtls_sha1_context *ctx );
-
-/**
- * \brief          SHA-1 process buffer
- *
- * \param ctx      SHA-1 context
- * \param input    buffer holding the  data
- * \param ilen     length of the input data
- */
-void mbedtls_sha1_update( mbedtls_sha1_context *ctx, const unsigned char *input, size_t ilen );
-
-/**
- * \brief          SHA-1 final digest
- *
- * \param ctx      SHA-1 context
- * \param output   SHA-1 checksum result
- */
-void mbedtls_sha1_finish( mbedtls_sha1_context *ctx, unsigned char output[20] );
-
-/* Internal use */
-void mbedtls_sha1_process( mbedtls_sha1_context *ctx, const unsigned char data[64] );
+#endif //CONFIG_IDF_TARGET_ESP32
 
 #endif
 

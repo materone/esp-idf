@@ -70,7 +70,7 @@
 
 
 /*
- ToDo: The multicore implementation of this uses taskENTER_CRITICAL etc to make sure the 
+ ToDo: The multicore implementation of this uses taskENTER_CRITICAL etc to make sure the
  queue structures aren't accessed by another processor or core. It would be useful to have
  IRQs be able to schedule stuff while doing task-related stuff, meaning we have to convert
  the taskENTER_CRITICAL stuff to a lock + a scheduler suspend instead.
@@ -78,8 +78,7 @@
 
 #include <stdlib.h>
 #include <string.h>
-
-#include "rom/ets_sys.h"
+#include "sdkconfig.h"
 
 /* Defining MPU_WRAPPERS_INCLUDED_FROM_API_FILE prevents task.h from redefining
 all the API functions to use the MPU wrappers.  That should only be done when
@@ -165,7 +164,7 @@ typedef struct QueueDefinition
 		uint8_t ucQueueType;
 	#endif
 
-	portMUX_TYPE mux;
+	portMUX_TYPE mux;		//Mutex required due to SMP
 
 } xQUEUE;
 
@@ -204,6 +203,9 @@ _Static_assert(sizeof(StaticQueue_t) == sizeof(Queue_t), "StaticQueue_t != Queue
 	The pcQueueName member of a structure being NULL is indicative of the
 	array position being vacant. */
 	QueueRegistryItem_t xQueueRegistry[ configQUEUE_REGISTRY_SIZE ];
+
+	//Need to add queue registry mutex to protect against simultaneous access
+	static portMUX_TYPE queue_registry_spinlock = portMUX_INITIALIZER_UNLOCKED;
 
 #endif /* configQUEUE_REGISTRY_SIZE */
 
@@ -262,7 +264,7 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 
 	configASSERT( pxQueue );
 
-	if ( xNewQueue == pdTRUE ) 
+	if ( xNewQueue == pdTRUE )
 	{
 		vPortCPUInitializeMutex(&pxQueue->mux);
 	}
@@ -335,6 +337,7 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 			the real queue and semaphore structures. */
 			volatile size_t xSize = sizeof( StaticQueue_t );
 			configASSERT( xSize == sizeof( Queue_t ) );
+			( void ) xSize; /* Keeps lint quiet when configASSERT() is not defined. */
 		}
 		#endif /* configASSERT_DEFINED */
 
@@ -720,6 +723,12 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 		configASSERT( !( ( xTaskGetSchedulerState() == taskSCHEDULER_SUSPENDED ) && ( xTicksToWait != 0 ) ) );
 	}
 	#endif
+	#if ( configUSE_MUTEXES == 1 && configCHECK_MUTEX_GIVEN_BY_OWNER == 1)
+	{
+		configASSERT(pxQueue->uxQueueType != queueQUEUE_IS_MUTEX || pxQueue->pxMutexHolder == NULL || xTaskGetCurrentTaskHandle() == pxQueue->pxMutexHolder);
+	}
+	#endif
+
 
 
 	/* This function relaxes the coding standard somewhat to allow return
@@ -773,7 +782,7 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 								mtCOVERAGE_TEST_MARKER();
 							}
 						}
-						else if( xYieldRequired != pdFALSE )
+						else if(xYieldRequired != pdFALSE)
 						{
 							/* This path is a special case that will only get
 							executed if the task was holding multiple mutexes
@@ -806,7 +815,7 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 							mtCOVERAGE_TEST_MARKER();
 						}
 					}
-					else if( xYieldRequired != pdFALSE )
+					else if(xYieldRequired != pdFALSE)
 					{
 						/* This path is a special case that will only get
 						executed if the task was holding multiple mutexes and
@@ -859,7 +868,7 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 		taskENTER_CRITICAL(&pxQueue->mux);
 
 		/* Update the timeout state to see if it has expired yet. */
-		if( xTaskCheckForTimeOut( &xTimeOut, &xTicksToWait ) == pdFALSE )
+		if(xTaskCheckForTimeOut( &xTimeOut, &xTicksToWait ) == pdFALSE )
 		{
 			if( prvIsQueueFull( pxQueue ) != pdFALSE )
 			{
@@ -1181,7 +1190,7 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 		if( ( pxQueue->uxMessagesWaiting < pxQueue->uxLength ) || ( xCopyPosition == queueOVERWRITE ) )
 		{
 			traceQUEUE_SEND_FROM_ISR( pxQueue );
-	
+
 			/* A task can only have an inherited priority if it is a mutex
 			holder - and if there is a mutex holder then the mutex cannot be
 			given from an ISR.  Therefore, unlike the xQueueGenericGive()
@@ -1323,7 +1332,7 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 		space'. */
 		if( pxQueue->uxMessagesWaiting < pxQueue->uxLength )
 		{
-			traceQUEUE_SEND_FROM_ISR( pxQueue );
+			traceQUEUE_GIVE_FROM_ISR( pxQueue );
 
 			/* A task can only have an inherited priority if it is a mutex
 			holder - and if there is a mutex holder then the mutex cannot be
@@ -1417,7 +1426,7 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 		}
 		else
 		{
-			traceQUEUE_SEND_FROM_ISR_FAILED( pxQueue );
+			traceQUEUE_GIVE_FROM_ISR_FAILED( pxQueue );
 			xReturn = errQUEUE_FULL;
 		}
 		taskEXIT_CRITICAL_ISR(&pxQueue->mux);
@@ -1564,7 +1573,7 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 		taskENTER_CRITICAL(&pxQueue->mux);
 
 		/* Update the timeout state to see if it has expired yet. */
-		if( xTaskCheckForTimeOut( &xTimeOut, &xTicksToWait ) == pdFALSE )
+		if(xTaskCheckForTimeOut( &xTimeOut, &xTicksToWait ) == pdFALSE)
 		{
 			if( prvIsQueueEmpty( pxQueue ) != pdFALSE )
 			{
@@ -1879,7 +1888,7 @@ BaseType_t xReturn = pdFALSE;
 		}
 		#endif /* configUSE_MUTEXES */
 	}
-	else if( xPosition == queueSEND_TO_BACK )
+	else if(xPosition == queueSEND_TO_BACK)
 	{
 		( void ) memcpy( ( void * ) pxQueue->pcWriteTo, pvItemToQueue, ( size_t ) pxQueue->uxItemSize ); /*lint !e961 !e418 MISRA exception as the casts are only redundant for some ports, plus previous logic ensures a null pointer can only be passed to memcpy() if the copy size is 0. */
 		pxQueue->pcWriteTo += pxQueue->uxItemSize;
@@ -2315,8 +2324,8 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 	void vQueueAddToRegistry( QueueHandle_t xQueue, const char *pcQueueName ) /*lint !e971 Unqualified char types are allowed for strings and single characters only. */
 	{
 	UBaseType_t ux;
-		
-		UNTESTED_FUNCTION();
+
+		portENTER_CRITICAL(&queue_registry_spinlock);
 		/* See if there is an empty space in the registry.  A NULL name denotes
 		a free slot. */
 		for( ux = ( UBaseType_t ) 0U; ux < ( UBaseType_t ) configQUEUE_REGISTRY_SIZE; ux++ )
@@ -2335,6 +2344,38 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 				mtCOVERAGE_TEST_MARKER();
 			}
 		}
+		portEXIT_CRITICAL(&queue_registry_spinlock);
+	}
+
+#endif /* configQUEUE_REGISTRY_SIZE */
+/*-----------------------------------------------------------*/
+
+#if ( configQUEUE_REGISTRY_SIZE > 0 )
+
+	//This function is backported from FreeRTOS v9.0.0
+	const char *pcQueueGetName( QueueHandle_t xQueue ) /*lint !e971 Unqualified char types are allowed for strings and single characters only. */
+	{
+	UBaseType_t ux;
+	const char *pcReturn = NULL; /*lint !e971 Unqualified char types are allowed for strings and single characters only. */
+
+		portENTER_CRITICAL(&queue_registry_spinlock);
+		/* Note there is nothing here to protect against another task adding or
+		removing entries from the registry while it is being searched. */
+		for( ux = ( UBaseType_t ) 0U; ux < ( UBaseType_t ) configQUEUE_REGISTRY_SIZE; ux++ )
+		{
+		    if( xQueueRegistry[ ux ].xHandle == xQueue )
+			{
+				pcReturn = xQueueRegistry[ ux ].pcQueueName;
+				break;
+			}
+			else
+			{
+				mtCOVERAGE_TEST_MARKER();
+			}
+		}
+		portEXIT_CRITICAL(&queue_registry_spinlock);
+
+		return pcReturn;
 	}
 
 #endif /* configQUEUE_REGISTRY_SIZE */
@@ -2346,6 +2387,7 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 	{
 	UBaseType_t ux;
 
+		portENTER_CRITICAL(&queue_registry_spinlock);
 		/* See if the handle of the queue being unregistered in actually in the
 		registry. */
 		for( ux = ( UBaseType_t ) 0U; ux < ( UBaseType_t ) configQUEUE_REGISTRY_SIZE; ux++ )
@@ -2361,6 +2403,7 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 				mtCOVERAGE_TEST_MARKER();
 			}
 		}
+		portEXIT_CRITICAL(&queue_registry_spinlock);
 
 	} /*lint !e818 xQueue could not be pointer to const because it is a typedef. */
 
@@ -2421,8 +2464,7 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 	{
 	BaseType_t xReturn;
 
-//ToDo: figure out locking
-//		taskENTER_CRITICAL(&pxQueue->mux);
+		taskENTER_CRITICAL(&(((Queue_t * )xQueueOrSemaphore)->mux));
 		{
 			if( ( ( Queue_t * ) xQueueOrSemaphore )->pxQueueSetContainer != NULL )
 			{
@@ -2441,7 +2483,7 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 				xReturn = pdPASS;
 			}
 		}
-//		taskEXIT_CRITICAL(&pxQueue->mux);
+		taskEXIT_CRITICAL(&(((Queue_t * )xQueueOrSemaphore)->mux));
 
 		return xReturn;
 	}
@@ -2470,12 +2512,12 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 		}
 		else
 		{
-//			taskENTER_CRITICAL(&pxQueue->mux);
+			taskENTER_CRITICAL(&(pxQueueOrSemaphore->mux));
 			{
 				/* The queue is no longer contained in the set. */
 				pxQueueOrSemaphore->pxQueueSetContainer = NULL;
 			}
-//			taskEXIT_CRITICAL(&pxQueue->mux);
+			taskEXIT_CRITICAL(&(pxQueueOrSemaphore->mux));
 			xReturn = pdPASS;
 		}
 
@@ -2518,9 +2560,15 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 	Queue_t *pxQueueSetContainer = pxQueue->pxQueueSetContainer;
 	BaseType_t xReturn = pdFALSE;
 
-		/* This function must be called form a critical section. */
+		/*
+		 * This function is called with a Queue's / Semaphore's spinlock already
+		 * acquired. Acquiring the Queue set's spinlock is still necessary.
+		 */
 
 		configASSERT( pxQueueSetContainer );
+
+		//Acquire the Queue set's spinlock
+		portENTER_CRITICAL(&(pxQueueSetContainer->mux));
 		configASSERT( pxQueueSetContainer->uxMessagesWaiting < pxQueueSetContainer->uxLength );
 
 		if( pxQueueSetContainer->uxMessagesWaiting < pxQueueSetContainer->uxLength )
@@ -2550,6 +2598,9 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 		{
 			mtCOVERAGE_TEST_MARKER();
 		}
+
+		//Release the Queue set's spinlock
+		portEXIT_CRITICAL(&(pxQueueSetContainer->mux));
 
 		return xReturn;
 	}

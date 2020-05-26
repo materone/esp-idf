@@ -1,5 +1,5 @@
-Programming ULP coprocessor using C macros
-==========================================
+Programming ULP coprocessor using C macros (legacy)
+===================================================
 
 In addition to the existing binutils port for the ESP32 ULP coprocessor, it is possible to generate programs for the ULP by embedding assembly-like macros into an ESP32 application. Here is an example how this can be done::
 
@@ -17,6 +17,10 @@ In addition to the existing binutils port for the ESP32 ULP coprocessor, it is p
     ulp_run(load_addr);
 
 The ``program`` array is an array of ``ulp_insn_t``, i.e. ULP coprocessor instructions. Each ``I_XXX`` preprocessor define translates into a single 32-bit instruction. Arguments of these preprocessor defines can be register numbers (``R0 — R3``) and literal constants. See `ULP coprocessor instruction defines`_ section for descriptions of instructions and arguments they take.
+
+.. note::
+
+    Because some of the instruction macros expand to inline function calls, defining such array in global scope will cause the compiler to produce an "initializer element is not constant" error. To fix this error, move the definition of instructions array into local scope.
 
 Load and store instructions use addresses expressed in 32-bit words. Address 0 corresponds to the first word of ``RTC_SLOW_MEM`` (which is address 0x50000000 as seen by the main CPUs).
 
@@ -46,6 +50,23 @@ Here is an example of using labels and branches::
     ulp_process_macros_and_load(load_addr, program, &size);
     ulp_run(load_addr);
 
+
+Application Example
+-------------------
+
+Demonstration of entering into deep sleep mode and waking up using several wake up sources: :example:`system/deep_sleep`.
+
+
+API Reference
+-------------
+
+Header File
+^^^^^^^^^^^
+
+.. list::
+
+    :esp32: - :component_file:`ulp/include/esp32/ulp.h`
+    :esp32s2: - :component_file:`ulp/include/esp32s2/ulp.h`
 
 Functions
 ^^^^^^^^^

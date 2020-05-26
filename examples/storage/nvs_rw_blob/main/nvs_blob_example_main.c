@@ -13,7 +13,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
-#include "esp_partition.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "driver/gpio.h"
@@ -28,7 +27,7 @@
  */
 esp_err_t save_restart_counter(void)
 {
-    nvs_handle my_handle;
+    nvs_handle_t my_handle;
     esp_err_t err;
 
     // Open
@@ -65,7 +64,7 @@ esp_err_t save_restart_counter(void)
  */
 esp_err_t save_run_time(void)
 {
-    nvs_handle my_handle;
+    nvs_handle_t my_handle;
     esp_err_t err;
 
     // Open
@@ -81,7 +80,10 @@ esp_err_t save_run_time(void)
     uint32_t* run_time = malloc(required_size + sizeof(uint32_t));
     if (required_size > 0) {
         err = nvs_get_blob(my_handle, "run_time", run_time, &required_size);
-        if (err != ESP_OK) return err;
+        if (err != ESP_OK) {
+            free(run_time);
+            return err;
+        }
     }
 
     // Write value including previously saved blob if available
@@ -108,7 +110,7 @@ esp_err_t save_run_time(void)
  */
 esp_err_t print_what_saved(void)
 {
-    nvs_handle my_handle;
+    nvs_handle_t my_handle;
     esp_err_t err;
 
     // Open
@@ -132,7 +134,10 @@ esp_err_t print_what_saved(void)
     } else {
         uint32_t* run_time = malloc(required_size);
         err = nvs_get_blob(my_handle, "run_time", run_time, &required_size);
-        if (err != ESP_OK) return err;
+        if (err != ESP_OK) {
+            free(run_time);
+            return err;
+        }
         for (int i = 0; i < required_size / sizeof(uint32_t); i++) {
             printf("%d: %d\n", i + 1, run_time[i]);
         }
@@ -145,25 +150,22 @@ esp_err_t print_what_saved(void)
 }
 
 
-void app_main()
+void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         // NVS partition was truncated and needs to be erased
-        const esp_partition_t* nvs_partition = esp_partition_find_first(
-                ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, NULL);
-        assert(nvs_partition && "partition table must have an NVS partition");
-        ESP_ERROR_CHECK( esp_partition_erase_range(nvs_partition, 0, nvs_partition->size) );
         // Retry nvs_flash_init
+        ESP_ERROR_CHECK(nvs_flash_erase());
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK( err );
 
     err = print_what_saved();
-    if (err != ESP_OK) printf("Error (%d) reading data from NVS!\n", err);
+    if (err != ESP_OK) printf("Error (%s) reading data from NVS!\n", esp_err_to_name(err));
 
     err = save_restart_counter();
-    if (err != ESP_OK) printf("Error (%d) saving restart counter to NVS!\n", err);
+    if (err != ESP_OK) printf("Error (%s) saving restart counter to NVS!\n", esp_err_to_name(err));
 
     gpio_pad_select_gpio(GPIO_NUM_0);
     gpio_set_direction(GPIO_NUM_0, GPIO_MODE_DEF_INPUT);
@@ -176,7 +178,7 @@ void app_main()
             vTaskDelay(1000 / portTICK_PERIOD_MS);
             if(gpio_get_level(GPIO_NUM_0) == 0) {
                 err = save_run_time();
-                if (err != ESP_OK) printf("Error (%d) saving run time blob to NVS!\n", err);
+                if (err != ESP_OK) printf("Error (%s) saving run time blob to NVS!\n", esp_err_to_name(err));
                 printf("Restarting...\n");
                 fflush(stdout);
                 esp_restart();

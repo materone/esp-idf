@@ -86,12 +86,13 @@ specific constants has been moved into the deprecated_definitions.h header
 file. */
 #include "deprecated_definitions.h"
 
+
 /* If portENTER_CRITICAL is not defined then including deprecated_definitions.h
 did not result in a portmacro.h header file being included - and it should be
 included here.  In this case the path to the correct portmacro.h header file
 must be set in the compiler's include path. */
 #ifndef portENTER_CRITICAL
-	#include "portmacro.h"
+	#include "freertos/portmacro.h"
 #endif
 
 #if portBYTE_ALIGNMENT == 8
@@ -123,6 +124,10 @@ extern "C" {
 #endif
 
 #include "mpu_wrappers.h"
+#include "esp_system.h"
+
+#include "hal/cpu_hal.h"
+#include "xt_instr_macros.h"
 
 /*
  * Setup the stack of a new task so it is ready to be placed under the
@@ -136,35 +141,17 @@ extern "C" {
 	StackType_t *pxPortInitialiseStack( StackType_t *pxTopOfStack, TaskFunction_t pxCode, void *pvParameters ) PRIVILEGED_FUNCTION;
 #endif
 
-/* Used by heap_5.c. */
-typedef struct HeapRegion
-{
-	uint8_t *pucStartAddress;
-	size_t xSizeInBytes;
-} HeapRegion_t;
-
-/*
- * Used to define multiple heap regions for use by heap_5.c.  This function
- * must be called before any calls to pvPortMalloc() - not creating a task,
- * queue, semaphore, mutex, software timer, event group, etc. will result in
- * pvPortMalloc being called.
- *
- * pxHeapRegions passes in an array of HeapRegion_t structures - each of which
- * defines a region of memory that can be used as the heap.  The array is
- * terminated by a HeapRegions_t structure that has a size of 0.  The region
- * with the lowest start address must appear first in the array.
- */
-void vPortDefineHeapRegions( const HeapRegion_t * const pxHeapRegions );
-
-
 /*
  * Map to the memory management routines required for the port.
+ *
+ * Note that libc standard malloc/free are also available for
+ * non-FreeRTOS-specific code, and behave the same as
+ * pvPortMalloc()/vPortFree().
  */
-void *pvPortMalloc( size_t xSize ) PRIVILEGED_FUNCTION;
-void vPortFree( void *pv ) PRIVILEGED_FUNCTION;
-void vPortInitialiseBlocks( void ) PRIVILEGED_FUNCTION;
-size_t xPortGetFreeHeapSize( void ) PRIVILEGED_FUNCTION;
-size_t xPortGetMinimumEverFreeHeapSize( void ) PRIVILEGED_FUNCTION;
+#define pvPortMalloc malloc
+#define vPortFree free
+#define xPortGetFreeHeapSize esp_get_free_heap_size
+#define xPortGetMinimumEverFreeHeapSize esp_get_minimum_free_heap_size
 
 /*
  * Setup the hardware ready for the scheduler to take control.  This generally
@@ -195,10 +182,10 @@ void vPortYieldOtherCore( BaseType_t coreid) PRIVILEGED_FUNCTION;
 void vPortSetStackWatchpoint( void* pxStackStart );
 
 /*
- * Returns true if the current core is in ISR context; low prio ISR, med prio ISR or timer tick ISR. High prio ISRs
- * aren't detected here, but they normally cannot call C code, so that should not be an issue anyway.
+ * This function will be called in High prio ISRs. Returns true if the current core was in ISR context
+ * before calling into high prio ISR context.
  */
-BaseType_t xPortInIsrContext();
+BaseType_t xPortInterruptedFromISRContext(void);
 
 /*
  * The structures and methods of manipulating the MPU are contained within the
@@ -214,21 +201,41 @@ BaseType_t xPortInIsrContext();
 #endif
 
 /* Multi-core: get current core ID */
-static inline uint32_t xPortGetCoreID() {
-    int id;
-    asm volatile(
-        "rsr.prid %0\n"
-        " extui %0,%0,13,1"
-        :"=r"(id));
-    return id;
+static inline uint32_t IRAM_ATTR xPortGetCoreID(void) {
+    return cpu_hal_get_core_id();
 }
 
 /* Get tick rate per second */
 uint32_t xPortGetTickRateHz(void);
 
+
+static inline bool IRAM_ATTR xPortCanYield(void)
+{
+    uint32_t ps_reg = 0;
+
+    //Get the current value of PS (processor status) register
+    RSR(PS, ps_reg);
+
+    /*
+     * intlevel = (ps_reg & 0xf);
+     * excm  = (ps_reg >> 4) & 0x1;
+     * CINTLEVEL is max(excm * EXCMLEVEL, INTLEVEL), where EXCMLEVEL is 3.
+     * However, just return true, only intlevel is zero.
+     */
+
+    return ((ps_reg & PS_INTLEVEL_MASK) == 0);
+}
+
 #ifdef __cplusplus
 }
 #endif
+
+static inline void uxPortCompareSetExtram(volatile uint32_t *addr, uint32_t compare, uint32_t *set) 
+{
+#if defined(CONFIG_ESP32_SPIRAM_SUPPORT)    
+    compare_and_set_extram(addr, compare, set);
+#endif    
+}
 
 #endif /* PORTABLE_H */
 

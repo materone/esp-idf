@@ -36,6 +36,16 @@ public:
     SpiFlashEmulator(size_t sectorCount) : mUpperSectorBound(sectorCount)
     {
         mData.resize(sectorCount * SPI_FLASH_SEC_SIZE / 4, 0xffffffff);
+        mEraseCnt.resize(sectorCount);
+        spi_flash_emulator_set(this);
+    }
+
+    SpiFlashEmulator(const char *filename)
+    {
+        load(filename);
+        // Atleast one page should be free, hence we create mData of size of 2 sectors.
+        mData.resize(mData.size() + SPI_FLASH_SEC_SIZE / 4, 0xffffffff);
+        mUpperSectorBound = mData.size() * 4 / SPI_FLASH_SEC_SIZE;
         spi_flash_emulator_set(this);
     }
 
@@ -115,6 +125,7 @@ public:
         std::fill_n(begin(mData) + offset, SPI_FLASH_SEC_SIZE / 4, 0xffffffff);
 
         ++mEraseOps;
+        mEraseCnt[sectorNumber]++;
         mTotalTime += getEraseOpTime();
         return true;
     }
@@ -148,10 +159,20 @@ public:
         fseek(f, 0, SEEK_END);
         off_t size = ftell(f);
         assert(size % SPI_FLASH_SEC_SIZE == 0);
-        mData.resize(size);
+        mData.resize(size / sizeof(uint32_t));
         fseek(f, 0, SEEK_SET);
         auto s = fread(mData.data(), SPI_FLASH_SEC_SIZE, size / SPI_FLASH_SEC_SIZE, f);
         assert(s == static_cast<size_t>(size / SPI_FLASH_SEC_SIZE));
+        fclose(f);
+    }
+    
+    void save(const char* filename)
+    {
+        FILE* f = fopen(filename, "wb");
+        auto n_sectors = mData.size() * sizeof(uint32_t) / SPI_FLASH_SEC_SIZE;
+        auto s = fwrite(mData.data(), SPI_FLASH_SEC_SIZE, n_sectors, f);
+        assert(s == n_sectors);
+        fclose(f);
     }
 
     void clearStats()
@@ -198,6 +219,10 @@ public:
         mFailCountdown = count;
     }
 
+    size_t getSectorEraseCount(uint32_t sector) const {
+        return mEraseCnt[sector];
+    }
+
 protected:
     static size_t getReadOpTime(uint32_t bytes);
     static size_t getWriteOpTime(uint32_t bytes);
@@ -205,6 +230,7 @@ protected:
 
 
     std::vector<uint32_t> mData;
+    std::vector<uint32_t> mEraseCnt;
 
     mutable size_t mReadOps = 0;
     mutable size_t mWriteOps = 0;

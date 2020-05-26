@@ -23,11 +23,50 @@
 #ifndef _SHA512_ALT_H_
 #define _SHA512_ALT_H_
 
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #if defined(MBEDTLS_SHA512_ALT)
+
+#if CONFIG_IDF_TARGET_ESP32S2
+#include "esp32s2/sha.h"
+
+typedef enum {
+    ESP_SHA512_STATE_INIT,
+    ESP_SHA512_STATE_IN_PROCESS
+} esp_sha512_state;
+
+/**
+ * \brief          SHA-512 context structure
+ */
+typedef struct {
+    uint64_t total[2];          /*!< number of bytes processed  */
+    uint64_t state[8];          /*!< intermediate digest state  */
+    unsigned char buffer[128];  /*!< data block being processed */
+    int first_block;
+    esp_sha_type mode;
+    uint32_t t_val;             /*!< t_val for 512/t mode */
+    esp_sha512_state sha_state;
+} mbedtls_sha512_context;
+
+/**
+ * @brief Sets the specfic algorithm for SHA512
+ *
+ * @param ctx The mbedtls sha512 context
+ *
+ * @param type The mode, used for setting SHA2_512224 and SHA2_512256:
+ *
+ */
+void esp_sha512_set_mode(mbedtls_sha512_context *ctx, esp_sha_type type);
+
+/* For SHA512/t mode the intial hash value will depend on t */
+void esp_sha512_set_t( mbedtls_sha512_context *ctx, uint16_t t_val);
+
+#endif //CONFIG_IDF_TARGET_ESP32S2
+
+#if CONFIG_IDF_TARGET_ESP32
 
 typedef enum {
     ESP_MBEDTLS_SHA512_UNUSED, /* first block hasn't been processed yet */
@@ -38,8 +77,7 @@ typedef enum {
 /**
  * \brief          SHA-512 context structure
  */
-typedef struct
-{
+typedef struct {
     uint64_t total[2];          /*!< number of bytes processed  */
     uint64_t state[8];          /*!< intermediate digest state  */
     unsigned char buffer[128];  /*!< data block being processed */
@@ -48,57 +86,7 @@ typedef struct
 }
 mbedtls_sha512_context;
 
-/**
- * \brief          Initialize SHA-512 context
- *
- * \param ctx      SHA-512 context to be initialized
- */
-void mbedtls_sha512_init( mbedtls_sha512_context *ctx );
-
-/**
- * \brief          Clear SHA-512 context
- *
- * \param ctx      SHA-512 context to be cleared
- */
-void mbedtls_sha512_free( mbedtls_sha512_context *ctx );
-
-/**
- * \brief          Clone (the state of) a SHA-512 context
- *
- * \param dst      The destination context
- * \param src      The context to be cloned
- */
-void mbedtls_sha512_clone( mbedtls_sha512_context *dst,
-                           const mbedtls_sha512_context *src );
-
-/**
- * \brief          SHA-512 context setup
- *
- * \param ctx      context to be initialized
- * \param is384    0 = use SHA512, 1 = use SHA384
- */
-void mbedtls_sha512_starts( mbedtls_sha512_context *ctx, int is384 );
-
-/**
- * \brief          SHA-512 process buffer
- *
- * \param ctx      SHA-512 context
- * \param input    buffer holding the  data
- * \param ilen     length of the input data
- */
-void mbedtls_sha512_update( mbedtls_sha512_context *ctx, const unsigned char *input,
-                    size_t ilen );
-
-/**
- * \brief          SHA-512 final digest
- *
- * \param ctx      SHA-512 context
- * \param output   SHA-384/512 checksum result
- */
-void mbedtls_sha512_finish( mbedtls_sha512_context *ctx, unsigned char output[64] );
-
-/* Internal use */
-void mbedtls_sha512_process( mbedtls_sha512_context *ctx, const unsigned char data[128] );
+#endif //CONFIG_IDF_TARGET_ESP32
 
 #endif
 
